@@ -21,6 +21,7 @@ let package = Package(
         .target(name: "DevsAppSDKUI", dependencies: ["DevsAppSDK"]),
         // Hits the live API: swift run DevsAppSmoke
         .executableTarget(name: "DevsAppSmoke", dependencies: ["DevsAppSDK"]),
+        .executableTarget(name: "RenderCheck", dependencies: ["DevsAppSDK", "DevsAppSDKUI"]),
         .testTarget(name: "DevsAppSDKTests", dependencies: ["DevsAppSDK", "DevsAppSDKUI"]),
     ]
 )
