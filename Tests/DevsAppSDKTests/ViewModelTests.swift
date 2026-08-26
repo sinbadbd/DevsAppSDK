@@ -53,6 +53,72 @@ struct AppListModelTests {
         #expect(model.visible.isEmpty)
     }
 
+
+    /// The pop bug: a failed refresh used to flip `state` out of `.loaded`,
+    /// which removed the list — and with it the navigationDestination that any
+    /// pushed detail view depends on, popping it instantly.
+    @Test func aFailedRefreshKeepsTheLoadedList() async {
+        guard #available(iOS 16, macOS 13, visionOS 1, *) else { return }
+
+        let client = makeClient(log: RequestLog(), cacheTTL: 0)
+        let model = AppListModel(client: client, title: "Apps")
+        await model.load(force: false)
+        #expect(model.all.count == 2)
+
+        // Now every request fails, as it would with an expired token.
+        let failing = DevsAppClient(configuration: DevsAppConfiguration(
+            maxRetries: 0,
+            transport: ClosureTransport { request in
+                (Data(#"{"ok":false,"error":"Missing or invalid Authorization: Bearer token."}"#.utf8),
+                 response(request.url!, 401))
+            }
+        ))
+        let stillLoaded = AppListModel(client: failing, title: "Apps")
+        stillLoaded.state = .loaded(model.all)
+
+        await stillLoaded.load(force: true)
+
+        // The list survives, so the detail view stays pushed.
+        guard case .loaded(let apps) = stillLoaded.state else {
+            Issue.record("a failed refresh must not leave .loaded, got \(stillLoaded.state)")
+            return
+        }
+        #expect(apps.count == 2)
+        #expect(stillLoaded.refreshError?.requiresAuthentication == true)
+    }
+
+    @Test func aFailedFirstLoadStillShowsTheErrorScreen() async {
+        guard #available(iOS 16, macOS 13, visionOS 1, *) else { return }
+
+        let failing = DevsAppClient(configuration: DevsAppConfiguration(
+            maxRetries: 0,
+            transport: ClosureTransport { _ in throw URLError(.notConnectedToInternet) }
+        ))
+        let model = AppListModel(client: failing, title: "Apps")
+
+        await model.load(force: false)
+
+        // With nothing to show, the full-screen error is still correct.
+        guard case .failed = model.state else {
+            Issue.record("expected .failed, got \(model.state)")
+            return
+        }
+        #expect(model.refreshError == nil)
+    }
+
+    @Test func aSuccessfulReloadClearsTheRefreshError() async {
+        guard #available(iOS 16, macOS 13, visionOS 1, *) else { return }
+
+        let model = AppListModel(client: makeClient(log: RequestLog(), cacheTTL: 0), title: "Apps")
+        await model.load(force: false)
+        model.refreshError = .network(underlying: URLError(.timedOut))
+
+        await model.load(force: true)
+
+        #expect(model.refreshError == nil)
+        #expect(model.all.count == 2)
+    }
+
     @Test("a failed load lands in .failed with a usable message")
     func failure() async {
         guard #available(iOS 16, macOS 13, visionOS 1, *) else { return }

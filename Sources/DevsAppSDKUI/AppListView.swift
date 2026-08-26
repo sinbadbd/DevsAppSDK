@@ -29,6 +29,13 @@ public struct AppListView: View {
     public var body: some View {
         content
             .navigationTitle(model.title)
+            // Declared here, outside the state switch, so it exists in every
+            // state. Inside the `.loaded` branch it would disappear the moment
+            // a refresh failed — and NavigationStack pops any pushed view whose
+            // destination is no longer in the hierarchy.
+            .navigationDestination(for: DevsApp.self) { app in
+                AppDetailView(client: model.client, slug: app.slug, preloaded: app)
+            }
             .task { await model.loadIfNeeded() }
     }
 
@@ -53,6 +60,14 @@ public struct AppListView: View {
 
     private var listBody: some View {
         List {
+            if let error = model.refreshError {
+                RefreshErrorBanner(error: error) {
+                    Task { await model.load(force: true) }
+                }
+                .listRowInsets(EdgeInsets(top: 4, leading: 16, bottom: 4, trailing: 16))
+                .listRowSeparator(.hidden)
+            }
+
             if !model.categories.isEmpty {
                 categoryPicker
                     .listRowInsets(EdgeInsets(top: 8, leading: 0, bottom: 8, trailing: 0))
@@ -75,9 +90,6 @@ public struct AppListView: View {
             }
         }
         .listStyle(.plain)
-        .navigationDestination(for: DevsApp.self) { app in
-            AppDetailView(client: model.client, slug: app.slug, preloaded: app)
-        }
     }
 
     private var categoryPicker: some View {
@@ -185,6 +197,11 @@ final class AppListModel: ObservableObject {
     @Published var query: String = ""
     @Published var category: String?
 
+    /// Set when a refresh fails but a previous result is still on screen. The
+    /// list keeps its content and shows this above it, rather than replacing
+    /// everything with a full-screen error.
+    @Published var refreshError: DevsAppError?
+
     let client: DevsAppClient
     let title: String
 
@@ -216,11 +233,21 @@ final class AppListModel: ObservableObject {
     }
 
     func load(force: Bool) async {
-        if !force { state = .loading }
+        let hasContent = !all.isEmpty
+        if !force, !hasContent { state = .loading }
+
         do {
             state = .loaded(try await client.listApps(forceRefresh: force))
+            refreshError = nil
         } catch {
-            state = .failed(asDevsAppError(error))
+            let failure = asDevsAppError(error)
+            if hasContent {
+                // Never pull a populated list out from under someone — least of
+                // all while they are reading a detail page pushed from it.
+                refreshError = failure
+            } else {
+                state = .failed(failure)
+            }
         }
     }
 }

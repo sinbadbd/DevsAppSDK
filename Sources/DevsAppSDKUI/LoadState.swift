@@ -99,3 +99,35 @@ struct RemoteImage: View {
         Rectangle().fill(.quaternary)
     }
 }
+
+/// Shown inline above a list whose refresh failed, when there is still content
+/// worth keeping on screen.
+@available(iOS 16, macOS 13, visionOS 1, *)
+@available(tvOS, unavailable)
+@available(watchOS, unavailable)
+struct RefreshErrorBanner: View {
+    let error: DevsAppError
+    let retry: () -> Void
+
+    var body: some View {
+        HStack(spacing: 10) {
+            Image(systemName: error.requiresAuthentication
+                  ? "lock.trianglebadge.exclamationmark"
+                  : "arrow.clockwise.circle")
+                .foregroundStyle(.secondary)
+            Text(error.errorDescription ?? "Couldn’t refresh.")
+                .font(.footnote)
+                .foregroundStyle(.secondary)
+            Spacer(minLength: 0)
+            Button("Retry", action: retry)
+                .font(.footnote.weight(.semibold))
+                .buttonStyle(.plain)
+        }
+        .padding(.vertical, 8)
+        .padding(.horizontal, 12)
+        .background(
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .fill(.quaternary)
+        )
+    }
+}
