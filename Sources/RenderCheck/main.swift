@@ -1,3 +1,7 @@
+// AppKit-only: this tool hosts the views in an NSWindow to snapshot them.
+// Guarded so the target doesn't break `xcodebuild -destination iOS`,
+// which builds every target in the package scheme.
+#if canImport(AppKit)
 // Temporary diagnostic: renders AppDetailView offscreen to a PNG so its layout
 // can be inspected without a device.
 import AppKit
@@ -88,3 +92,5 @@ if #available(macOS 13, *) {
 } else {
     print("needs macOS 13")
 }
+
+#endif

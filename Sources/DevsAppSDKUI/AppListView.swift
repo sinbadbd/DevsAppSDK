@@ -28,6 +28,8 @@ public struct AppListView: View {
 
     public var body: some View {
         content
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .background(platformBackground)
             .navigationTitle(model.title)
             // Declared here, outside the state switch, so it exists in every
             // state. Inside the `.loaded` branch it would disappear the moment

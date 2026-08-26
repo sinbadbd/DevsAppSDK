@@ -37,6 +37,8 @@ public struct AppDetailView: View {
                 ProgressView().frame(maxWidth: .infinity, maxHeight: .infinity)
             }
         }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(platformBackground)
         .navigationTitle(model.app?.name ?? "")
         #if os(iOS) || os(visionOS)
         .navigationBarTitleDisplayMode(.inline)

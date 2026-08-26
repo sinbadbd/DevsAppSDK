@@ -21,6 +21,24 @@ public enum LoadState<Value: Sendable>: Sendable {
     }
 }
 
+/// The system's page background.
+///
+/// These views must paint their own ground rather than inheriting the host's.
+/// Label colours follow the colour scheme, so a view drawn over a mismatched
+/// background renders white text on white — which reads as a blank screen.
+@available(iOS 15, macOS 12, visionOS 1, *)
+@available(tvOS, unavailable)
+@available(watchOS, unavailable)
+var platformBackground: Color {
+    #if canImport(UIKit)
+    return Color(uiColor: .systemBackground)
+    #elseif canImport(AppKit)
+    return Color(nsColor: .textBackgroundColor)
+    #else
+    return Color.clear
+    #endif
+}
+
 /// Normalizes anything thrown by the SDK into a ``DevsAppError``.
 func asDevsAppError(_ error: any Error) -> DevsAppError {
     (error as? DevsAppError) ?? .network(underlying: error)
