@@ -1,0 +1,170 @@
+import Foundation
+import Testing
+@testable import DevsAppSDK
+@testable import DevsAppSDKUI
+
+/// The list and detail screens are thin wrappers over these models, so testing
+/// them covers the behaviour a SwiftUI preview would only show by eye.
+@Suite("AppListModel")
+@MainActor
+struct AppListModelTests {
+    @Test("loads and exposes the catalogue")
+    func loads() async {
+        guard #available(iOS 16, macOS 13, visionOS 1, *) else { return }
+        let log = RequestLog()
+        let model = AppListModel(client: makeClient(log: log), title: "Apps")
+
+        #expect(model.all.isEmpty)
+        await model.load(force: false)
+
+        #expect(model.all.count == 2)
+        #expect(model.visible.count == 2)
+        #expect(model.categories == ["Developer Tools", "Utilities"])
+        #expect(model.searchPrompt == "Search 2 apps")
+    }
+
+    @Test("loadIfNeeded only loads once")
+    func loadsOnce() async {
+        guard #available(iOS 16, macOS 13, visionOS 1, *) else { return }
+        let log = RequestLog()
+        let model = AppListModel(client: makeClient(log: log), title: "Apps")
+
+        await model.loadIfNeeded()
+        await model.loadIfNeeded()
+
+        #expect(await log.count == 1)
+    }
+
+    @Test("search and category filter the loaded list")
+    func filters() async {
+        guard #available(iOS 16, macOS 13, visionOS 1, *) else { return }
+        let model = AppListModel(client: makeClient(log: RequestLog()), title: "Apps")
+        await model.load(force: false)
+
+        model.query = "storage"
+        #expect(model.visible.map(\.slug) == ["quickclean"])
+
+        model.query = ""
+        model.category = "Developer Tools"
+        #expect(model.visible.map(\.slug) == ["sendman"])
+
+        model.category = nil
+        model.query = "nothing matches"
+        #expect(model.visible.isEmpty)
+    }
+
+    @Test("a failed load lands in .failed with a usable message")
+    func failure() async {
+        guard #available(iOS 16, macOS 13, visionOS 1, *) else { return }
+        let client = DevsAppClient(configuration: DevsAppConfiguration(
+            maxRetries: 0,
+            transport: ClosureTransport { _ in throw URLError(.notConnectedToInternet) }
+        ))
+        let model = AppListModel(client: client, title: "Apps")
+
+        await model.load(force: false)
+
+        guard case .failed(let error) = model.state else {
+            Issue.record("expected .failed, got \(model.state)")
+            return
+        }
+        #expect(error.errorDescription?.isEmpty == false)
+        #expect(model.visible.isEmpty)
+    }
+}
+
+@Suite("AppDetailModel")
+@MainActor
+struct AppDetailModelTests {
+    private func listApp() async throws -> DevsApp {
+        let apps = try await makeClient(log: RequestLog()).listApps()
+        return try #require(apps.first)
+    }
+
+    @Test("fetches the app for its slug")
+    func fetches() async {
+        guard #available(iOS 16, macOS 13, visionOS 1, *) else { return }
+        let model = AppDetailModel(
+            client: makeClient(log: RequestLog()),
+            slug: "quickclean",
+            preloaded: nil
+        )
+
+        #expect(model.app == nil)
+        await model.load(force: false)
+
+        #expect(model.app?.slug == "quickclean")
+        #expect(model.app?.version == "1.0.1")
+    }
+
+    @Test("renders the preloaded app before the fetch lands")
+    func preloadedRendersFirst() async throws {
+        guard #available(iOS 16, macOS 13, visionOS 1, *) else { return }
+        let preloaded = try await listApp()
+        let model = AppDetailModel(
+            client: makeClient(log: RequestLog()),
+            slug: preloaded.slug,
+            preloaded: preloaded
+        )
+
+        // Available on the very first frame, with no load having run.
+        #expect(model.app?.slug == "quickclean")
+        #expect(model.app?.version == "1.0.0")
+
+        await model.load(force: true)
+        #expect(model.app?.version == "1.0.1") // the fetch then supersedes it
+    }
+
+    @Test("an unknown slug lands in .failed with a not-found message")
+    func unknownSlug() async {
+        guard #available(iOS 16, macOS 13, visionOS 1, *) else { return }
+        let model = AppDetailModel(
+            client: makeClient(log: RequestLog()),
+            slug: "does-not-exist",
+            preloaded: nil
+        )
+
+        await model.load(force: false)
+
+        guard case .failed(let error) = model.state else {
+            Issue.record("expected .failed, got \(model.state)")
+            return
+        }
+        guard case .notFound(let slug) = error else {
+            Issue.record("expected .notFound, got \(error)")
+            return
+        }
+        #expect(slug == "does-not-exist")
+        #expect(model.app == nil) // so the view shows the error, not a blank page
+    }
+
+    @Test("keeps showing the preloaded app when the refresh fails")
+    func keepsPreloadedOnFailure() async throws {
+        guard #available(iOS 16, macOS 13, visionOS 1, *) else { return }
+        let preloaded = try await listApp()
+        let client = DevsAppClient(configuration: DevsAppConfiguration(
+            maxRetries: 0,
+            transport: ClosureTransport { _ in throw URLError(.timedOut) }
+        ))
+        let model = AppDetailModel(client: client, slug: preloaded.slug, preloaded: preloaded)
+
+        await model.load(force: true)
+
+        // A dropped connection shouldn't blank a page that already has content.
+        #expect(model.app?.slug == "quickclean")
+    }
+
+    @Test("opening detail after a list load costs no request")
+    func servedFromCache() async throws {
+        guard #available(iOS 16, macOS 13, visionOS 1, *) else { return }
+        let log = RequestLog()
+        let client = makeClient(log: log)
+        _ = try await client.listApps()
+
+        let model = AppDetailModel(client: client, slug: "quickclean", preloaded: nil)
+        await model.load(force: false)
+
+        #expect(model.app?.slug == "quickclean")
+        #expect(await log.count == 1)
+    }
+}
