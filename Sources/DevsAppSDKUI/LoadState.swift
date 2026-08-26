@@ -51,6 +51,7 @@ struct ErrorStateView: View {
 
     private var symbol: String {
         switch error {
+        case .unauthorized: return "lock.trianglebadge.exclamationmark"
         case .network: return "wifi.slash"
         case .notFound: return "questionmark.app.dashed"
         case .api: return "exclamationmark.icloud"

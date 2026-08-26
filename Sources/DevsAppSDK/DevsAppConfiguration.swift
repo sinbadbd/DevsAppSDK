@@ -29,6 +29,14 @@ public struct DevsAppConfiguration: Sendable {
     /// How requests actually reach the network. Swap for tests.
     public var transport: any HTTPTransport
 
+    /// Bearer token sent as `Authorization` on every request. The API rejects
+    /// unauthenticated calls with 401.
+    public var token: String?
+
+    /// Asked for a token before each call, when set — for a token that lives in
+    /// the Keychain, or behind a refresh flow. Takes precedence over ``token``.
+    public var tokenProvider: (@Sendable () async -> String?)?
+
     public init(
         baseURL: URL = DevsAppConfiguration.defaultBaseURL,
         timeout: TimeInterval = 15,
@@ -36,7 +44,9 @@ public struct DevsAppConfiguration: Sendable {
         maxRetries: Int = 2,
         retryBackoff: TimeInterval = 0.3,
         additionalHeaders: [String: String] = [:],
-        transport: any HTTPTransport = URLSessionTransport()
+        transport: any HTTPTransport = URLSessionTransport(),
+        token: String? = nil,
+        tokenProvider: (@Sendable () async -> String?)? = nil
     ) {
         self.baseURL = baseURL
         self.timeout = timeout
@@ -45,5 +55,7 @@ public struct DevsAppConfiguration: Sendable {
         self.retryBackoff = retryBackoff
         self.additionalHeaders = additionalHeaders
         self.transport = transport
+        self.token = token
+        self.tokenProvider = tokenProvider
     }
 }

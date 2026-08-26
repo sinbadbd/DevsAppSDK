@@ -8,11 +8,14 @@ Pure Foundation, no dependencies. The client is an `actor`, the models are
 concurrency on.
 
 ```swift
-let client = DevsAppClient()
+let client = DevsAppClient(configuration: DevsAppConfiguration(token: myToken))
 
 let apps = try await client.listApps()                  // GET apps.php
 let app = try await client.app(slug: "quickclean")      // GET apps.php?slug=…
 ```
+
+> **The API requires a bearer token.** Unauthenticated requests are rejected with
+> `401`. See [Authentication](#authentication).
 
 There is a companion Dart/Flutter SDK with the same shape at
 `flutter/devsapp_sdk`.
@@ -63,6 +66,56 @@ struct MyApp: App {
 
 It's an `actor`, so passing it across tasks and views is safe. There is nothing
 to close.
+
+## Authentication
+
+Every request needs `Authorization: Bearer <token>`; the server answers `401`
+without one.
+
+```swift
+let client = DevsAppClient(configuration: DevsAppConfiguration(token: myToken))
+```
+
+A raw token and an already-formed `Bearer …` value are both accepted; a blank
+one is treated as no token.
+
+### Tokens that change
+
+For a token in the Keychain, or behind a refresh flow, pass a **provider**. It's
+asked once per call (not once per retry), so a refreshed token is picked up on
+the next request:
+
+```swift
+let client = DevsAppClient(configuration: DevsAppConfiguration(
+    tokenProvider: { await Keychain.shared.devsappToken() }
+))
+```
+
+Or set it at runtime on a client that owns its token:
+
+```swift
+await client.setToken(newToken)   // drops responses cached as the old identity
+await client.setToken(nil)        // sign out
+```
+
+`setToken` is ignored when a `tokenProvider` is configured — there the provider
+is the source of truth.
+
+### When a token is rejected
+
+```swift
+do {
+    let apps = try await client.listApps()
+} catch let error as DevsAppError {
+    if error.requiresAuthentication {
+        await signInAgain()
+    }
+}
+```
+
+`401` and `403` are never retried: the same credentials would just fail again.
+It's also why a `401` on a slug lookup surfaces as `.unauthorized` rather than
+being mistaken for a missing app.
 
 ## List
 
@@ -233,10 +286,11 @@ do {
     let apps = try await client.listApps()
 } catch let error as DevsAppError {
     switch error {
-    case .network:  show("Check your connection.")
-    case .notFound: show("That app is no longer listed.")
-    case .api:      show("devsapp.app is having trouble.")
-    case .decoding: show("Unexpected response.")
+    case .unauthorized: await signInAgain()
+    case .network:      show("Check your connection.")
+    case .notFound:     show("That app is no longer listed.")
+    case .api:          show("devsapp.app is having trouble.")
+    case .decoding:     show("Unexpected response.")
     }
 }
 ```
@@ -246,6 +300,7 @@ sentence you can put in front of someone.
 
 | Case | Raised when | Carries |
 | --- | --- | --- |
+| `.unauthorized(statusCode:message:)` | 401/403 — no token, an expired one, or one without access | status + server message |
 | `.network(underlying:)` | Offline, DNS/TLS failure, timeout — no HTTP response | the `URLError` |
 | `.notFound(slug:)` | HTTP 404 | the slug |
 | `.api(statusCode:message:)` | 5xx, rate limit, or `{"ok": false}` | status + server message |
@@ -261,7 +316,8 @@ let client = DevsAppClient(configuration: DevsAppConfiguration(
     maxRetries: 2,                     // 0 disables retrying
     retryBackoff: 0.3,                 // doubles each attempt
     additionalHeaders: ["X-Client": "MyApp/1.0"],
-    transport: URLSessionTransport()   // or .ephemeral, or your own
+    transport: URLSessionTransport(),  // or .ephemeral, or your own
+    token: myToken,                    // or tokenProvider: { await … }
 ))
 
 await client.clearCache()
@@ -272,7 +328,9 @@ Behaviour you get without asking:
 - **Cached** in memory for the TTL. A `listApps()` call also warms the detail
   cache for every app it returned.
 - **Retried** on timeouts, connection failures, 429 and 5xx, with exponential
-  backoff. A 404 is a definitive answer and is never retried.
+  backoff. 401, 403 and 404 are definitive answers and are never retried.
+- **Dropped on identity change**: `setToken` clears the cache, so responses
+  fetched as one identity are never served to another.
 - **Coalesced**: identical concurrent requests share one network call, so a list
   and a detail view appearing in the same frame don't both fetch.
 
@@ -290,12 +348,15 @@ let client = DevsAppClient(configuration: DevsAppConfiguration(
 ))
 ```
 
-The package's own suite does exactly that — 39 tests over parsing, caching,
-filtering, coalescing, retry policy and every error path, all offline.
+The package's own suite does exactly that — 61 tests over parsing, caching,
+filtering, coalescing, retry policy, authentication and every error path, all
+offline.
 
 ```bash
-swift test                  # 39 tests
-swift run DevsAppSmoke      # hits the live API
+swift test                  # 61 tests
+
+# The live check needs a token; it exits 2 without one.
+DEVSAPP_TOKEN=<token> swift run DevsAppSmoke
 ```
 
 ## App Transport Security
@@ -309,16 +370,19 @@ checkbox under Signing & Capabilities.
 
 ## The API underneath
 
-Read-only, public, unauthenticated. Base endpoint `https://devsapp.app/api/apps.php`.
+Read-only, token-authenticated. Base endpoint `https://devsapp.app/api/apps.php`.
 
 | Call | Request | Response |
 | --- | --- | --- |
 | List | `GET apps.php` | `200` `{"ok": true, "count": 10, "apps": [ … ]}` |
 | Detail | `GET apps.php?slug=quickclean` | `200` `{"ok": true, "app": { … }}` |
 | Unknown slug | `GET apps.php?slug=nope` | `404` `{"ok": false, "error": "App not found."}` |
+| No token | any call without `Authorization` | `401` `{"ok": false, "error": "Missing or invalid Authorization: Bearer token."}` |
 
-The server sends `cache-control: public, max-age=300`, which is where the
-five-minute default TTL comes from. It accepts no pagination, search or filter
+The five-minute default TTL comes from the `cache-control: public, max-age=300`
+the server sent before it required auth; it now sends `cache-control: no-store`.
+This SDK still keeps its short in-memory cache, since that is application state
+rather than an HTTP cache — set `cacheTTL: 0` if you would rather it kept nothing. It accepts no pagination, search or filter
 parameters — everything arrives in one response, which is why on-device
 filtering is the right shape here rather than a compromise.
 

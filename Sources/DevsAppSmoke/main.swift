@@ -1,4 +1,5 @@
-// Hits the live API. Run with: swift run DevsAppSmoke
+// Hits the live API, which requires a bearer token:
+//   DEVSAPP_TOKEN=<token> swift run DevsAppSmoke
 import DevsAppSDK
 import Foundation
 
@@ -6,7 +7,16 @@ func pad(_ text: String, _ width: Int) -> String {
     text.count >= width ? text : text + String(repeating: " ", count: width - text.count)
 }
 
-let client = DevsAppClient()
+guard let token = ProcessInfo.processInfo.environment["DEVSAPP_TOKEN"],
+      !token.isEmpty
+else {
+    FileHandle.standardError.write(Data(
+        "Set DEVSAPP_TOKEN to run this. The API rejects unauthenticated requests with 401.\n".utf8
+    ))
+    exit(2)
+}
+
+let client = DevsAppClient(configuration: DevsAppConfiguration(token: token))
 
 do {
     let apps = try await client.listApps()
@@ -44,6 +54,9 @@ do {
     let start = Date()
     _ = try await client.app(slug: apps[0].slug)
     print(String(format: "CACHED DETAIL: %.1fms", Date().timeIntervalSince(start) * 1000))
+} catch let error as DevsAppError where error.requiresAuthentication {
+    print("Token rejected (HTTP \(error.statusCode ?? 0)): \(error.errorDescription ?? "")")
+    exit(1)
 } catch {
     print("FAILED: \(error)")
     exit(1)

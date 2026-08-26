@@ -20,13 +20,49 @@ public actor DevsAppClient {
     private var listCache: TTLCache<String, [DevsApp]>
     private var detailCache: TTLCache<String, DevsApp>
     private var inFlight: [String: Task<Data, any Error>] = [:]
+    private var token: String?
 
     private static let listCacheKey = "__all__"
 
     public init(configuration: DevsAppConfiguration = DevsAppConfiguration()) {
         self.configuration = configuration
+        self.token = configuration.token
         self.listCache = TTLCache(ttl: configuration.cacheTTL)
         self.detailCache = TTLCache(ttl: configuration.cacheTTL)
+    }
+
+    /// Whether this client will send an `Authorization` header. A client built
+    /// with a `tokenProvider` reports `true` without calling it.
+    public var isAuthenticated: Bool {
+        token != nil || configuration.tokenProvider != nil
+    }
+
+    /// Replaces the bearer token at runtime — after a sign-in, or once a
+    /// refresh produces a new one. Pass `nil` to sign out.
+    ///
+    /// Cached responses were fetched as whoever held the previous token, so
+    /// changing it drops them. Has no effect when a `tokenProvider` is set:
+    /// there the provider is the source of truth.
+    public func setToken(_ newToken: String?) {
+        guard configuration.tokenProvider == nil else { return }
+        guard token != newToken else { return }
+        token = newToken
+        clearCache()
+    }
+
+    /// The `Authorization` value for the next request, or nil to send none.
+    private func bearerToken() async -> String? {
+        let resolved: String?
+        if let provider = configuration.tokenProvider {
+            resolved = await provider()
+        } else {
+            resolved = token
+        }
+        guard let value = resolved?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !value.isEmpty
+        else { return nil }
+        // Accept a raw token or an already-formed header value.
+        return value.lowercased().hasPrefix("bearer ") ? value : "Bearer \(value)"
     }
 
     // MARK: - List
@@ -194,8 +230,15 @@ public actor DevsAppClient {
         }
 
         let configuration = self.configuration
+        // Resolved once per call, so a provider isn't asked again on each retry.
+        let authorization = await bearerToken()
         let task = Task<Data, any Error> {
-            try await Self.perform(url: url, configuration: configuration, notFoundSlug: notFoundSlug)
+            try await Self.perform(
+                url: url,
+                configuration: configuration,
+                authorization: authorization,
+                notFoundSlug: notFoundSlug
+            )
         }
         inFlight[key] = task
 
@@ -213,6 +256,7 @@ public actor DevsAppClient {
     private nonisolated static func perform(
         url: URL,
         configuration: DevsAppConfiguration,
+        authorization: String?,
         notFoundSlug: String?
     ) async throws -> Data {
         var lastError: DevsAppError?
@@ -230,6 +274,9 @@ public actor DevsAppClient {
             request.httpMethod = "GET"
             request.timeoutInterval = configuration.timeout
             request.setValue("application/json", forHTTPHeaderField: "Accept")
+            if let authorization {
+                request.setValue(authorization, forHTTPHeaderField: "Authorization")
+            }
             for (field, value) in configuration.additionalHeaders {
                 request.setValue(value, forHTTPHeaderField: field)
             }
@@ -246,6 +293,19 @@ public actor DevsAppClient {
             }
 
             let status = response.statusCode
+
+            // A rejected token is definitive: the same credentials keep
+            // failing, so this never retries and never reaches the 404 or
+            // generic branches below.
+            if status == 401 || status == 403 {
+                throw DevsAppError.unauthorized(
+                    statusCode: status,
+                    message: Self.serverMessage(in: data)
+                        ?? (status == 401
+                            ? "This request needs an Authorization: Bearer token."
+                            : "That token is not allowed to read this.")
+                )
+            }
 
             // A 404 is a definitive answer, not a transient failure.
             if status == 404 {
