@@ -21,6 +21,16 @@ public enum LoadState<Value: Sendable>: Sendable {
     }
 }
 
+/// How the list opens an app's detail.
+public enum DetailPresentation: Sendable {
+    /// Slides up as a bottom sheet over the list. Independent of navigation,
+    /// so nothing can pop or replace it while it is open.
+    case sheet
+
+    /// Pushes onto the surrounding `NavigationStack`.
+    case push
+}
+
 /// The system's page background.
 ///
 /// These views must paint their own ground rather than inheriting the host's.

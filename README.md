@@ -193,6 +193,34 @@ That gives you a searchable, category-filterable list with pull-to-refresh and a
 retryable error state, navigating to a detail screen with a screenshot gallery
 and store buttons.
 
+### How the detail opens
+
+Tapping a row opens the detail as a **bottom sheet** by default — it slides up
+over the list, opens at half height, drags to full, and carries its own Done
+button. The sheet is presented by the list itself rather than by navigation, so
+nothing in the navigation hierarchy can dismiss or replace it while it is open.
+
+```swift
+DevsAppCatalogView(client: client)                            // sheet (default)
+DevsAppCatalogView(client: client, detailPresentation: .push) // push instead
+```
+
+To present the sheet from your own list:
+
+```swift
+@State private var selected: DevsApp?
+
+List(apps) { app in
+    Button(app.name) { selected = app }
+}
+.sheet(item: $selected) { app in
+    AppDetailSheet(client: client, app: app) { selected = nil }
+}
+```
+
+`AppDetailSheet` takes the app you already have, so it has content on its first
+frame and never opens empty.
+
 To place the screens inside navigation you already own:
 
 ```swift

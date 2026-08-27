@@ -141,7 +141,27 @@ struct SnapshotTests {
 
 
 
+    @Test("the detail sheet draws its content and a Done button")
+    func detailSheet() throws {
+        guard #available(iOS 16, *) else { return }
+        let app = try Self.fixtureApp()
+        let view = AppDetailSheet(client: Self.fixtureClient(), app: app, onClose: {})
+        let image = Self.render(view, style: .light)
+        let fraction = Self.visibleFraction(image)
+        print("SNAPSHOT detail-sheet visible=\(fraction) path=\(Self.save(image, "detail-sheet"))")
+        #expect(fraction > 0.01, "detail sheet rendered blank")
+    }
 
+    @Test("the detail sheet draws in dark mode")
+    func detailSheetDark() throws {
+        guard #available(iOS 16, *) else { return }
+        let app = try Self.fixtureApp()
+        let view = AppDetailSheet(client: Self.fixtureClient(), app: app, onClose: {})
+        let image = Self.render(view, style: .dark)
+        let fraction = Self.visibleFraction(image)
+        print("SNAPSHOT detail-sheet-dark visible=\(fraction) path=\(Self.save(image, "detail-sheet-dark"))")
+        #expect(fraction > 0.01, "detail sheet rendered blank in dark mode")
+    }
 
     @Test("control: ErrorStateView draws on its own")
     func controlErrorView() throws {

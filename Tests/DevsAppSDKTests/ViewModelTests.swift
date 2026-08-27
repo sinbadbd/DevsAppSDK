@@ -119,6 +119,48 @@ struct AppListModelTests {
         #expect(model.all.count == 2)
     }
 
+
+    /// The whole point of the sheet: it belongs to the list, not to navigation,
+    /// so nothing that happens to the list's state can close it.
+    @Test func anOpenSheetSurvivesAFailedRefresh() async {
+        guard #available(iOS 16, macOS 13, visionOS 1, *) else { return }
+
+        let model = AppListModel(client: makeClient(log: RequestLog(), cacheTTL: 0), title: "Apps")
+        await model.load(force: false)
+        model.selected = model.all.first
+        #expect(model.selected?.slug == "quickclean")
+
+        // Token expires; the refresh fails.
+        let failing = DevsAppClient(configuration: DevsAppConfiguration(
+            maxRetries: 0,
+            transport: ClosureTransport { request in
+                (Data(#"{"ok":false,"error":"Missing or invalid Authorization: Bearer token."}"#.utf8),
+                 response(request.url!, 401))
+            }
+        ))
+        let stillOpen = AppListModel(client: failing, title: "Apps")
+        stillOpen.state = .loaded(model.all)
+        stillOpen.selected = model.all.first
+
+        await stillOpen.load(force: true)
+
+        #expect(stillOpen.selected?.slug == "quickclean", "the open sheet was closed by a failed refresh")
+        #expect(stillOpen.refreshError?.requiresAuthentication == true)
+    }
+
+    @Test func selectingAnAppOpensTheSheet() async {
+        guard #available(iOS 16, macOS 13, visionOS 1, *) else { return }
+
+        let model = AppListModel(client: makeClient(log: RequestLog()), title: "Apps")
+        await model.load(force: false)
+
+        #expect(model.selected == nil)
+        model.selected = model.all.first
+        #expect(model.selected != nil)
+        model.selected = nil
+        #expect(model.selected == nil)
+    }
+
     @Test("a failed load lands in .failed with a usable message")
     func failure() async {
         guard #available(iOS 16, macOS 13, visionOS 1, *) else { return }

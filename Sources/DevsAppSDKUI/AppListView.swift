@@ -19,10 +19,19 @@ import SwiftUI
 public struct AppListView: View {
     @StateObject private var model: AppListModel
 
+    private let detailPresentation: DetailPresentation
+
     /// - Parameters:
     ///   - client: The shared client. Make one and hold onto it.
     ///   - title: Navigation title for the list.
-    public init(client: DevsAppClient, title: String = "Apps") {
+    ///   - detailPresentation: Whether tapping a row opens a bottom sheet
+    ///     (the default) or pushes onto the surrounding navigation stack.
+    public init(
+        client: DevsAppClient,
+        title: String = "Apps",
+        detailPresentation: DetailPresentation = .sheet
+    ) {
+        self.detailPresentation = detailPresentation
         _model = StateObject(wrappedValue: AppListModel(client: client, title: title))
     }
 
@@ -37,6 +46,13 @@ public struct AppListView: View {
             // destination is no longer in the hierarchy.
             .navigationDestination(for: DevsApp.self) { app in
                 AppDetailView(client: model.client, slug: app.slug, preloaded: app)
+            }
+            // A sheet is presented by the list itself, so it does not depend on
+            // a navigation destination staying in the hierarchy.
+            .sheet(item: $model.selected) { app in
+                AppDetailSheet(client: model.client, app: app) {
+                    model.selected = nil
+                }
             }
             .task { await model.loadIfNeeded() }
     }
@@ -85,8 +101,21 @@ public struct AppListView: View {
                     .listRowSeparator(.hidden)
             } else {
                 ForEach(model.visible) { app in
-                    NavigationLink(value: app) {
-                        AppRow(app: app)
+                    switch detailPresentation {
+                    case .push:
+                        NavigationLink(value: app) { AppRow(app: app) }
+                    case .sheet:
+                        Button { model.selected = app } label: {
+                            HStack {
+                                AppRow(app: app)
+                                Spacer(minLength: 8)
+                                Image(systemName: "chevron.right")
+                                    .font(.footnote.weight(.semibold))
+                                    .foregroundStyle(.tertiary)
+                            }
+                            .contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain)
                     }
                 }
             }
@@ -203,6 +232,9 @@ final class AppListModel: ObservableObject {
     /// list keeps its content and shows this above it, rather than replacing
     /// everything with a full-screen error.
     @Published var refreshError: DevsAppError?
+
+    /// The app whose detail sheet is open, if any.
+    @Published var selected: DevsApp?
 
     let client: DevsAppClient
     let title: String

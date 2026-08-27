@@ -21,15 +21,30 @@ import SwiftUI
 public struct DevsAppCatalogView: View {
     private let client: DevsAppClient
     private let title: String
+    private let detailPresentation: DetailPresentation
 
-    public init(client: DevsAppClient = DevsAppClient(), title: String = "Apps") {
+    /// - Parameters:
+    ///   - client: The shared client.
+    ///   - title: Navigation title for the list.
+    ///   - detailPresentation: Whether tapping a row opens a bottom sheet
+    ///     (the default) or pushes onto the navigation stack.
+    public init(
+        client: DevsAppClient = DevsAppClient(),
+        title: String = "Apps",
+        detailPresentation: DetailPresentation = .sheet
+    ) {
         self.client = client
         self.title = title
+        self.detailPresentation = detailPresentation
     }
 
     public var body: some View {
         NavigationStack {
-            AppListView(client: client, title: title)
+            AppListView(
+                client: client,
+                title: title,
+                detailPresentation: detailPresentation
+            )
         }
     }
 }
